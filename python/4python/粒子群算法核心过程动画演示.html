@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粒子群算法(PSO)核心过程演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', 'SimHei', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        .control-button {
+            padding: 0.6rem 1.2rem; border-radius: 0.5rem; font-size: 1rem;
+            font-weight: bold; cursor: pointer; transition: all 0.2s; border: none;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        .control-button:disabled { background-color: #d1d5db; cursor: not-allowed; }
+        .control-button:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
+        .explanation-box { background-color: #f9fafb; border: 1px solid #e5e7eb; min-height: 120px; }
+        .param-slider { -webkit-appearance: none; width: 100%; height: 8px; background: #d1d5db; outline: none; opacity: 0.7; transition: opacity .2s; }
+        .param-slider:hover { opacity: 1; }
+        .param-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; background: #3b82f6; cursor: pointer; border-radius: 50%; }
+        .param-slider::-moz-range-thumb { width: 20px; height: 20px; background: #3b82f6; cursor: pointer; border-radius: 50%; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 max-w-7xl">
+        <header class="text-center mb-6">
+            <h1 class="text-3xl font-extrabold text-gray-900">粒子群算法核心过程详解</h1>
+            <p class="text-md text-gray-600 mt-2">观察“粒子”如何平衡“自我认知”与“社会经验”来寻找最优解</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Main Canvas -->
+            <div class="lg:col-span-2 bg-white p-4 rounded-xl shadow-lg border">
+                <canvas id="psoCanvas"></canvas>
+            </div>
+
+            <!-- Controls and Explanation -->
+            <div class="space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-lg border">
+                    <h2 class="text-xl font-bold mb-4 text-center">操作面板</h2>
+                    <div class="space-y-4">
+                        <button id="resetBtn" class="control-button bg-blue-500 text-white w-full hover:bg-blue-600">1. 初始化/重置粒子群</button>
+                        <button id="stepBtn" class="control-button bg-green-500 text-white w-full hover:bg-green-600" disabled>2. 单步执行</button>
+                        <button id="playPauseBtn" class="control-button bg-indigo-500 text-white w-full hover:bg-indigo-600" disabled>自动播放</button>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-xl shadow-lg border">
+                    <h2 class="text-xl font-bold mb-4 text-center">参数实时调节</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="wSlider" class="font-medium">惯性权重 (w): <span id="wValue">0.7</span></label>
+                            <input type="range" min="0.1" max="1.2" value="0.7" step="0.05" class="param-slider" id="wSlider">
+                        </div>
+                        <div>
+                            <label for="c1Slider" class="font-medium">自我认知 (c1): <span id="c1Value">1.5</span></label>
+                            <input type="range" min="0" max="4" value="1.5" step="0.1" class="param-slider" id="c1Slider">
+                        </div>
+                        <div>
+                            <label for="c2Slider" class="font-medium">社会经验 (c2): <span id="c2Value">1.5</span></label>
+                            <input type="range" min="0" max="4" value="1.5" step="0.1" class="param-slider" id="c2Slider">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-6 bg-white p-6 rounded-xl shadow-lg border">
+             <h2 class="text-xl font-bold mb-2">过程讲解</h2>
+             <div id="explanationText" class="explanation-box rounded-lg p-4 text-gray-700">
+                 请点击“初始化/重置粒子群”按钮开始。
+             </div>
+        </div>
+    </div>
+
+<script>
+    // --- DOM Elements ---
+    const canvas = document.getElementById('psoCanvas');
+    const ctx = canvas.getContext('2d');
+    const resetBtn = document.getElementById('resetBtn');
+    const stepBtn = document.getElementById('stepBtn');
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    const explanationText = document.getElementById('explanationText');
+    const wSlider = document.getElementById('wSlider');
+    const c1Slider = document.getElementById('c1Slider');
+    const c2Slider = document.getElementById('c2Slider');
+    const wValue = document.getElementById('wValue');
+    const c1Value = document.getElementById('c1Value');
+    const c2Value = document.getElementById('c2Value');
+
+    // --- Parameters ---
+    let params = {
+        popSize: 30,
+        w: 0.7,
+        c1: 1.5,
+        c2: 1.5,
+    };
+    const bounds = { x: [-6, 6], y: [-6, 6] };
+    let particles = [];
+    let gBest = { pos: [Infinity, Infinity], val: Infinity };
+    let isPlaying = false;
+    let animationFrameId;
+    let iteration = 0;
+    const MAX_ITER = 200;
+
+    // --- Objective Function (Himmelblau's) ---
+    function objectiveFunction(x, y) {
+        return Math.pow(x * x + y - 11, 2) + Math.pow(x + y * y - 7, 2);
+    }
+    const MINIMA = [
+        [3, 2],
+        [-2.805118, 3.131312],
+        [-3.779310, -3.283186],
+        [3.584428, -1.848126]
+    ];
+
+
+    // --- Canvas & Drawing ---
+    function resizeCanvas() {
+        const parent = canvas.parentElement;
+        canvas.width = parent.clientWidth - 32;
+        canvas.height = canvas.width * 0.75; // Aspect ratio
+    }
+    
+    function worldToScreen(worldX, worldY) {
+        const screenX = (worldX - bounds.x[0]) / (bounds.x[1] - bounds.x[0]) * canvas.width;
+        const screenY = (1 - (worldY - bounds.y[0]) / (bounds.y[1] - bounds.y[0])) * canvas.height;
+        return { x: screenX, y: screenY };
+    }
+
+    function drawBackground() {
+        // Draw contour lines
+        const levels = [1, 5, 15, 30, 50, 100, 200, 400];
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#e2e8f0'; // gray-200
+        
+        const resolution = 200;
+        const xStep = (bounds.x[1] - bounds.x[0]) / resolution;
+        const yStep = (bounds.y[1] - bounds.y[0]) / resolution;
+        
+        let values = [];
+        for (let i = 0; i <= resolution; i++) {
+            values[i] = [];
+            for (let j = 0; j <= resolution; j++) {
+                const x = bounds.x[0] + i * xStep;
+                const y = bounds.y[0] + j * yStep;
+                values[i][j] = objectiveFunction(x, y);
+            }
+        }
+        
+        levels.forEach(level => {
+            for (let i = 0; i < resolution; i++) {
+                for (let j = 0; j < resolution; j++) {
+                    const v_ij = values[i][j];
+                    const v_i1j = values[i+1][j];
+                    const v_ij1 = values[i][j+1];
+
+                    if ((v_ij < level && v_i1j > level) || (v_ij > level && v_i1j < level) ||
+                        (v_ij < level && v_ij1 > level) || (v_ij > level && v_ij1 < level))
+                    {
+                        const p = worldToScreen(bounds.x[0] + i * xStep, bounds.y[0] + j * yStep);
+                        ctx.fillStyle = '#f1f5f9'; // gray-100
+                        ctx.fillRect(p.x, p.y, canvas.width/resolution, canvas.height/resolution);
+                    }
+                }
+            }
+        });
+
+        // Draw minima
+        ctx.fillStyle = '#f59e0b'; // amber-500
+        MINIMA.forEach(min => {
+            const p = worldToScreen(min[0], min[1]);
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 8, 0, 2 * Math.PI);
+            ctx.fill();
+        });
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawBackground();
+
+        particles.forEach((p, index) => {
+            // Draw pBest
+            const pBestScreen = worldToScreen(p.pBest.pos[0], p.pBest.pos[1]);
+            ctx.fillStyle = `rgba(107, 114, 128, 0.2)`;
+            ctx.beginPath();
+            ctx.arc(pBestScreen.x, pBestScreen.y, 10, 0, 2 * Math.PI);
+            ctx.fill();
+
+            // Draw particle
+            const posScreen = worldToScreen(p.pos[0], p.pos[1]);
+            ctx.fillStyle = index === 0 ? '#ef4444' : '#3b82f6'; // Highlight first particle
+            ctx.beginPath();
+            ctx.arc(posScreen.x, posScreen.y, 5, 0, 2 * Math.PI);
+            ctx.fill();
+        });
+        
+        // Draw gBest
+        const gBestScreen = worldToScreen(gBest.pos[0], gBest.pos[1]);
+        ctx.fillStyle = '#10b981'; // emerald-500
+        ctx.font = '24px sans-serif';
+        ctx.fillText('⭐', gBestScreen.x - 12, gBestScreen.y + 8);
+
+        // Draw velocity vectors for the first particle
+        if (particles.length > 0) {
+            drawVelocityVectors(particles[0]);
+        }
+    }
+
+    function drawVelocityVectors(p) {
+        const pScreen = worldToScreen(p.pos[0], p.pos[1]);
+
+        const drawArrow = (from, to, color) => {
+            const headlen = 10;
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const angle = Math.atan2(dy, dx);
+            ctx.beginPath();
+            ctx.moveTo(from.x, from.y);
+            ctx.lineTo(to.x, to.y);
+            ctx.lineTo(to.x - headlen * Math.cos(angle - Math.PI / 6), to.y - headlen * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(to.x, to.y);
+            ctx.lineTo(to.x - headlen * Math.cos(angle + Math.PI / 6), to.y - headlen * Math.sin(angle + Math.PI / 6));
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        };
+
+        // Inertia vector
+        const inertiaEnd = worldToScreen(p.pos[0] + params.w * p.vel[0], p.pos[1] + params.w * p.vel[1]);
+        drawArrow(pScreen, inertiaEnd, '#6366f1'); // Indigo
+
+        // Cognitive vector
+        const cognitiveEnd = worldToScreen(p.pos[0] + (p.pBest.pos[0] - p.pos[0]) * params.c1 * Math.random(), p.pos[1] + (p.pBest.pos[1] - p.pos[1]) * params.c1 * Math.random());
+        drawArrow(pScreen, cognitiveEnd, '#ec4899'); // Pink
+
+        // Social vector
+        const socialEnd = worldToScreen(p.pos[0] + (gBest.pos[0] - p.pos[0]) * params.c2 * Math.random(), p.pos[1] + (gBest.pos[1] - p.pos[1]) * params.c2 * Math.random());
+        drawArrow(pScreen, socialEnd, '#84cc16'); // Lime
+    }
+
+
+    // --- Core Logic ---
+    function init() {
+        resizeCanvas();
+        particles = [];
+        gBest = { pos: [Infinity, Infinity], val: Infinity };
+        iteration = 0;
+
+        for (let i = 0; i < params.popSize; i++) {
+            const pos = [
+                Math.random() * (bounds.x[1] - bounds.x[0]) + bounds.x[0],
+                Math.random() * (bounds.y[1] - bounds.y[0]) + bounds.y[0]
+            ];
+            const val = objectiveFunction(pos[0], pos[1]);
+            
+            const particle = {
+                pos: pos,
+                vel: [0, 0],
+                pBest: { pos: [...pos], val: val }
+            };
+            particles.push(particle);
+
+            if (val < gBest.val) {
+                gBest.val = val;
+                gBest.pos = [...pos];
+            }
+        }
+        
+        stepBtn.disabled = false;
+        playPauseBtn.disabled = false;
+        playPauseBtn.textContent = '自动播放';
+        isPlaying = false;
+        
+        explanationText.innerHTML = `<strong>初始化完成:</strong> 共创建了 <strong>${params.popSize}</strong> 个粒子（蓝色点）。<br>
+        每个粒子周围的灰色半透明圆圈是它自己的“历史最佳位置”(pBest)。<br>
+        绿色的星星 ⭐ 代表整个粒子群当前的“全局最佳位置”(gBest)。<br>
+        红色的粒子是我们的“焦点粒子”，它的移动将由三个向量决定。`;
+
+        draw();
+    }
+    
+    function step() {
+        if (iteration >= MAX_ITER) {
+            isPlaying = false;
+            playPauseBtn.textContent = '重新开始';
+            explanationText.innerHTML += `<br><strong>完成:</strong> 已达到最大迭代次数 ${MAX_ITER}。`;
+            return;
+        }
+
+        particles.forEach(p => {
+            // Update velocity
+            const r1 = Math.random();
+            const r2 = Math.random();
+
+            p.vel[0] = params.w * p.vel[0] +
+                       params.c1 * r1 * (p.pBest.pos[0] - p.pos[0]) +
+                       params.c2 * r2 * (gBest.pos[0] - p.pos[0]);
+            
+            p.vel[1] = params.w * p.vel[1] +
+                       params.c1 * r1 * (p.pBest.pos[1] - p.pos[1]) +
+                       params.c2 * r2 * (gBest.pos[1] - p.pos[1]);
+
+            // Update position
+            p.pos[0] += p.vel[0];
+            p.pos[1] += p.vel[1];
+            
+            // Clamp position to bounds
+            p.pos[0] = Math.max(bounds.x[0], Math.min(bounds.x[1], p.pos[0]));
+            p.pos[1] = Math.max(bounds.y[0], Math.min(bounds.y[1], p.pos[1]));
+
+            // Update pBest and gBest
+            const newVal = objectiveFunction(p.pos[0], p.pos[1]);
+            if (newVal < p.pBest.val) {
+                p.pBest.val = newVal;
+                p.pBest.pos = [...p.pos];
+            }
+            if (newVal < gBest.val) {
+                gBest.val = newVal;
+                gBest.pos = [...p.pos];
+            }
+        });
+
+        iteration++;
+        
+        explanationText.innerHTML = `<strong>第 ${iteration} 次迭代:</strong><br>
+        <span style="color:#6366f1;">■ 惯性(w):</span> 粒子保持原有方向的趋势。<br>
+        <span style="color:#ec4899;">■ 自我认知(c1):</span> 粒子飞向自己历史最佳位置的趋势。<br>
+        <span style="color:#84cc16;">■ 社会经验(c2):</span> 粒子飞向群体全局最佳位置的趋势。`;
+        
+        draw();
+    }
+
+    function gameLoop() {
+        if (!isPlaying) return;
+        step();
+        animationFrameId = requestAnimationFrame(gameLoop);
+    }
+    
+    // --- Event Listeners ---
+    resetBtn.addEventListener('click', () => {
+        cancelAnimationFrame(animationFrameId);
+        init();
+    });
+
+    stepBtn.addEventListener('click', () => {
+        if (isPlaying) {
+            isPlaying = false;
+            playPauseBtn.textContent = '自动播放';
+            cancelAnimationFrame(animationFrameId);
+        }
+        step();
+    });
+
+    playPauseBtn.addEventListener('click', () => {
+        if (playPauseBtn.textContent === '重新开始') {
+            init();
+            return;
+        }
+        isPlaying = !isPlaying;
+        playPauseBtn.textContent = isPlaying ? '暂停' : '自动播放';
+        if (isPlaying) {
+            gameLoop();
+        } else {
+            cancelAnimationFrame(animationFrameId);
+        }
+    });
+
+    wSlider.addEventListener('input', (e) => { params.w = parseFloat(e.target.value); wValue.textContent = params.w; });
+    c1Slider.addEventListener('input', (e) => { params.c1 = parseFloat(e.target.value); c1Value.textContent = params.c1; });
+    c2Slider.addEventListener('input', (e) => { params.c2 = parseFloat(e.target.value); c2Value.textContent = params.c2; });
+
+    window.addEventListener('resize', () => {
+        resizeCanvas();
+        draw();
+    });
+
+    // --- Initial Load ---
+    init();
+
+</script>
+</body>
+</html>

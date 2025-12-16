@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>神经网络演示：前向传播 & 反向传播（字母识别）</title>
+  <style>
+    :root {
+      --bg: #0f1220;
+      --panel: #151a2b;
+      --panel-2: #1b2136;
+      --text: #e6ebff;
+      --muted: #9fb0ffaa;
+      --accent: #92ffd6;
+      --accent-2: #9ec5ff;
+      --good: #39d98a;
+      --bad: #ff6b6b;
+      --grid-on: #f2f4ff;
+      --grid-off: #303a5a;
+      --highlight: #ffd36e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif; }
+    h1 { font-size: 20px; margin: 12px 0; }
+    h2 { font-size: 16px; margin: 10px 0; color: var(--accent-2); }
+    .app { display: grid; grid-template-columns: 320px 1fr 320px; gap: 12px; height: 100%; padding: 12px; }
+    .panel { background: var(--panel); border: 1px solid #222a44; border-radius: 10px; padding: 12px; overflow: hidden; }
+    .panel .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .btn { background: #20284a; color: var(--text); border: 1px solid #2a3562; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+    .btn:hover { background: #26305a; }
+    .btn-danger { background: #3b2230; border-color: #512838; }
+    .btn-primary { background: #123b35; border-color: #184b42; }
+    .btn-on { outline: 2px solid var(--highlight); }
+    .small { font-size: 12px; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(5, 36px); grid-template-rows: repeat(5, 36px); gap: 6px; }
+    .cell { width: 36px; height: 36px; background: var(--grid-off); border-radius: 6px; border: 1px solid #2b355c; cursor: pointer; transition: background 120ms; }
+    .cell.on { background: var(--grid-on); }
+    .section { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px dashed #263056; }
+    .bar { height: 12px; background: #263056; border-radius: 6px; position: relative; overflow: hidden; }
+    .bar > .fill { position: absolute; top: 0; left: 0; bottom: 0; width: 0%; background: linear-gradient(90deg, #6ee7ff, #a0ffd6); }
+    .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .kv { display: grid; grid-template-columns: 80px 1fr; gap: 6px; align-items: center; }
+    .hidden-grid { display: grid; grid-template-columns: repeat(4, 66px); gap: 8px; }
+    .mini-map { width: 66px; height: 66px; position: relative; border-radius: 6px; overflow: hidden; border: 1px solid #2a3562; background: var(--panel-2); cursor: pointer; }
+    .mini-map .title { position: absolute; left: 4px; top: 2px; font-size: 11px; color: var(--muted); }
+    .mini-map .activation { position: absolute; right: 4px; bottom: 2px; font-size: 11px; color: var(--accent); }
+    .heat { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); }
+    .heat div { border: 0.5px solid #1e2643; }
+    .mini-map.selected { outline: 2px solid var(--highlight); }
+    .explain { background: var(--panel-2); border: 1px dashed #2a3562; border-radius: 8px; padding: 8px; font-size: 13px; line-height: 1.5; }
+    .foot { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .hr { height: 1px; background: #222a44; margin: 8px 0; }
+    label { font-size: 13px; color: var(--muted); }
+    input[type="range"] { width: 140px; }
+    .legend { display:flex; gap:8px; align-items:center; }
+    .legend .chip { width: 12px; height: 12px; border-radius: 3px; border: 1px solid #2a3562; }
+    .chip-pos { background: #ffb4b4; }
+    .chip-neg { background: #b4d1ff; }
+    .chip-zero { background: #2a3562; }
+    /* 叠加视图更大一些，便于讲解 */
+    #overlayMap { width: 160px; height: 160px; }
+    #overlayControls { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+    .ov-chip { background: #20284a; border: 1px solid #2a3562; border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+    .ov-chip input { margin-right: 4px; }
+  </style>
+  <meta name="description" content="交互式可视化：通过5x5字母网格、隐藏层热力图、输出条形，直观理解前向传播与反向传播如何让神经网络学会识别字母。" />
+  <meta name="author" content="Codex 教学演示" />
+  <meta name="robots" content="noindex" />
+</head>
+<body>
+  <div class="app">
+    <!-- 左：输入与控制 -->
+    <div class="panel" id="left">
+      <div class="header"><h1>输入（5×5）</h1></div>
+      <div class="section">
+        <div id="inputGrid" class="grid" aria-label="5×5 输入栅格"></div>
+        <div class="row" style="margin-top:8px;">
+          <button class="btn" id="btnClear">清空</button>
+          <button class="btn" id="btnNoise">加一点随机噪声</button>
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <span class="small">快速加载字母：</span>
+          <button class="btn" data-letter="A">A</button>
+          <button class="btn" data-letter="B">B</button>
+          <button class="btn" data-letter="C">C</button>
+        </div>
+      </div>
+      <div class="section">
+        <h2>训练目标</h2>
+        <div class="row">
+          <label for="targetSel">希望识别为：</label>
+          <select id="targetSel" class="btn">
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+          </select>
+          <span class="small">（训练时用作“正确答案”）</span>
+        </div>
+      </div>
+      <div class="section">
+        <h2>训练控制</h2>
+        <div class="row" style="gap:10px;">
+          <button class="btn" id="btnRandom">随机权重</button>
+          <button class="btn" id="btnForward">前向传播</button>
+          <button class="btn btn-primary" id="btnTrain1">训练一步</button>
+          <button class="btn btn-primary" id="btnTrain100">训练100步</button>
+          <button class="btn" id="btnAuto">自动训练</button>
+        </div>
+        <div class="row" style="margin-top:8px;align-items:center;gap:12px;">
+          <div class="row" style="gap:6px;align-items:center;">
+            <label>学习率</label>
+            <input type="range" id="lr" min="0.01" max="0.5" step="0.01" value="0.1">
+            <span id="lrVal" class="small">0.10</span>
+          </div>
+          <div class="legend">
+            <span class="small">权重热力图：</span>
+            <div class="chip chip-neg" title="负权重"></div><span class="small">负</span>
+            <div class="chip chip-zero" title="接近0"></div><span class="small">零</span>
+            <div class="chip chip-pos" title="正权重"></div><span class="small">正</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="explain" id="explain">
+          提示：点击“前向传播”，看看当前输入的激活如何流向隐藏层和输出；点击“训练一步”，感受网络如何把“错”变小，逐步学会识别目标字母。
+        </div>
+      </div>
+    </div>
+
+    <!-- 中：隐藏层与权重热图 -->
+    <div class="panel" id="mid">
+      <div class="header"><h1>隐藏层（每个小方块是一个“神经元”）</h1></div>
+      <div class="small" style="margin-bottom:8px;">点击可查看该神经元“关注”的输入模式（5×5热力图）。颜色：红=正关注，蓝=负关注，深度代表强度。</div>
+      <div id="hiddenGrid" class="hidden-grid"></div>
+      <div class="hr"></div>
+      <div class="explain" id="bpNote">
+        直觉化反向传播：模型先“猜”输出，与目标比较得到“错”；这份“错”会沿着连接传回去，像水流倒灌一样推动相关连接的“旋钮”（权重）微调，下一次再猜就更接近正确答案。
+      </div>
+      <div class="hr"></div>
+      <div class="section">
+        <h2>叠加视图（把多个“笔画侦探”合在一起）</h2>
+        <div class="small" style="margin-bottom:6px;">勾选若干隐藏神经元，查看它们合成的“笔画模板”。可选择叠加方式：</div>
+        <div class="row small" style="gap:14px; align-items:center;">
+          <div>
+            <label><input type="radio" name="ovMode" id="ovModeW" checked> 权重相加</label>
+            <label style="margin-left:14px;"><input type="radio" name="ovMode" id="ovModeWA"> 按当前激活加权</label>
+          </div>
+          <button class="btn" id="btnOvClear">清空选择</button>
+          <span class="small">提示：按住 Shift/Ctrl 点击上面的隐藏神经元小图，也可加入/移除叠加集合。</span>
+        </div>
+        <div id="overlayControls"></div>
+        <div class="row" style="gap:12px; align-items:flex-start;">
+          <div class="mini-map" id="overlayMap">
+            <div class="heat" id="overlayHeat"></div>
+            <div class="title">合成</div>
+            <div class="activation" id="overlayInfo">—</div>
+          </div>
+          <div class="small" style="max-width:260px;">
+            理解：
+            - “权重相加”≈ 合并这些侦探喜欢/不喜欢的区域；
+            - “按当前激活加权”≈ 哪个侦探此刻更兴奋，就对结果更有话语权。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右：输出与结果 -->
+    <div class="panel" id="right">
+      <div class="header"><h1>输出（哪个字母？）</h1></div>
+      <div class="section">
+        <div class="cols">
+          <div>
+            <div class="kv"><div>A</div><div class="bar"><div id="barA" class="fill"></div></div></div>
+            <div class="small" id="valA">0.00</div>
+          </div>
+          <div>
+            <div class="kv"><div>B</div><div class="bar"><div id="barB" class="fill"></div></div></div>
+            <div class="small" id="valB">0.00</div>
+          </div>
+          <div>
+            <div class="kv"><div>C</div><div class="bar"><div id="barC" class="fill"></div></div></div>
+            <div class="small" id="valC">0.00</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <div class="kv"><div>预测</div><div id="pred" class="small">—</div></div>
+          <div class="kv"><div>目标</div><div id="tgt" class="small">A</div></div>
+          <div class="kv"><div>损失</div><div id="loss" class="small">0.000</div></div>
+        </div>
+      </div>
+      <div class="section">
+        <h2>可视化选项</h2>
+        <div class="row" style="gap:10px;">
+          <button class="btn" id="btnShowAct">高亮激活</button>
+          <button class="btn" id="btnShowGrad">显示上一步梯度</button>
+        </div>
+        <div class="small" style="margin-top:6px;">“高亮激活”：用亮度标示当前前向传播的强弱。 “显示上一步梯度”：在选中的隐藏神经元热图上叠加红/蓝边框提示权重增减方向。</div>
+      </div>
+      <div>
+        <div class="explain">
+          阅读建议：
+          - 输入像“印章”，隐藏神经元学会一些“笔画模板”；
+          - 输出把这些“笔画”组合起来，决定更像 A、B 还是 C；
+          - 训练就是不断把“像A”的连接加一点，“不像A”的减一点。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ——— 配置与数据 ———
+    const INPUT_SIZE = 25;      // 5x5
+    const HIDDEN = 8;           // 少量神经元，便于观察
+    const OUTPUT = 3;           // A, B, C
+    const letters = {
+      A: [
+        0,1,1,1,0,
+        1,0,0,0,1,
+        1,1,1,1,1,
+        1,0,0,0,1,
+        1,0,0,0,1
+      ],
+      B: [
+        1,1,1,1,0,
+        1,0,0,0,1,
+        1,1,1,1,0,
+        1,0,0,0,1,
+        1,1,1,1,0
+      ],
+      C: [
+        0,1,1,1,1,
+        1,0,0,0,0,
+        1,0,0,0,0,
+        1,0,0,0,0,
+        0,1,1,1,1
+      ]
+    };
+
+    // ——— 状态 ———
+    let X = new Array(INPUT_SIZE).fill(0);
+    let W1 = []; // [in][h]
+    let b1 = new Array(HIDDEN).fill(0);
+    let W2 = []; // [h][out]
+    let b2 = new Array(OUTPUT).fill(0);
+    let lastGrads = { dW1: null, dW2: null, db1: null, db2: null };
+    let showAct = false;
+    let showGrad = false;
+    let autoTimer = null;
+    let overlaySel = new Set(); // 叠加选择的隐藏神经元下标
+
+    // ——— 工具函数 ———
+    const sigmoid = x => 1 / (1 + Math.exp(-x));
+    const dsigmoidFromY = y => y * (1 - y); // 使用输出计算导数，避免重复算sigmoid
+
+    function randn(scale = 0.5) {
+      // 简化：均匀分布近似，足够演示
+      return (Math.random() - 0.5) * 2 * scale;
+    }
+
+    function initWeights() {
+      W1 = Array.from({ length: INPUT_SIZE }, () => Array.from({ length: HIDDEN }, () => randn(0.6)));
+      b1 = Array.from({ length: HIDDEN }, () => randn(0.2));
+      W2 = Array.from({ length: HIDDEN }, () => Array.from({ length: OUTPUT }, () => randn(0.6)));
+      b2 = Array.from({ length: OUTPUT }, () => randn(0.2));
+      lastGrads = { dW1: null, dW2: null, db1: null, db2: null };
+    }
+
+    function oneHot(letter) {
+      const map = { A:0, B:1, C:2 };
+      const v = [0,0,0];
+      v[map[letter]] = 1;
+      return v;
+    }
+
+    function forward(x) {
+      // z1 = xW1 + b1
+      const z1 = new Array(HIDDEN).fill(0);
+      for (let j = 0; j < HIDDEN; j++) {
+        let s = b1[j];
+        for (let i = 0; i < INPUT_SIZE; i++) s += x[i] * W1[i][j];
+        z1[j] = s;
+      }
+      const a1 = z1.map(sigmoid);
+
+      // z2 = a1 W2 + b2
+      const z2 = new Array(OUTPUT).fill(0);
+      for (let k = 0; k < OUTPUT; k++) {
+        let s = b2[k];
+        for (let j = 0; j < HIDDEN; j++) s += a1[j] * W2[j][k];
+        z2[k] = s;
+      }
+      const out = z2.map(sigmoid);
+      return { z1, a1, z2, out };
+    }
+
+    function lossMSE(y, o) {
+      let s = 0;
+      for (let k = 0; k < OUTPUT; k++) s += 0.5 * (o[k] - y[k]) ** 2;
+      return s;
+    }
+
+    function backprop(x, y, cache) {
+      const { z1, a1, z2, out } = cache;
+      // 输出层梯度
+      const dZ2 = new Array(OUTPUT);
+      for (let k = 0; k < OUTPUT; k++) {
+        const diff = (out[k] - y[k]); // d(1/2 (o-y)^2)/do = (o - y)
+        dZ2[k] = diff * dsigmoidFromY(out[k]);
+      }
+
+      // 隐藏层梯度
+      const dZ1 = new Array(HIDDEN).fill(0);
+      for (let j = 0; j < HIDDEN; j++) {
+        let s = 0;
+        for (let k = 0; k < OUTPUT; k++) s += dZ2[k] * W2[j][k];
+        dZ1[j] = s * dsigmoidFromY(a1[j]);
+      }
+
+      // 梯度：W2, b2
+      const dW2 = Array.from({ length: HIDDEN }, () => new Array(OUTPUT).fill(0));
+      const db2 = dZ2.slice();
+      for (let j = 0; j < HIDDEN; j++)
+        for (let k = 0; k < OUTPUT; k++) dW2[j][k] = a1[j] * dZ2[k];
+
+      // 梯度：W1, b1
+      const dW1 = Array.from({ length: INPUT_SIZE }, () => new Array(HIDDEN).fill(0));
+      const db1 = dZ1.slice();
+      for (let i = 0; i < INPUT_SIZE; i++)
+        for (let j = 0; j < HIDDEN; j++) dW1[i][j] = x[i] * dZ1[j];
+
+      return { dW1, db1, dW2, db2 };
+    }
+
+    function step(x, y, lr) {
+      const cache = forward(x);
+      const grads = backprop(x, y, cache);
+      // 更新
+      for (let j = 0; j < HIDDEN; j++) for (let k = 0; k < OUTPUT; k++) W2[j][k] -= lr * grads.dW2[j][k];
+      for (let k = 0; k < OUTPUT; k++) b2[k] -= lr * grads.db2[k];
+      for (let i = 0; i < INPUT_SIZE; i++) for (let j = 0; j < HIDDEN; j++) W1[i][j] -= lr * grads.dW1[i][j];
+      for (let j = 0; j < HIDDEN; j++) b1[j] -= lr * grads.db1[j];
+      lastGrads = grads;
+      return cache; // 返回更新前的前向结果用于展示
+    }
+
+    // ——— UI 生成 ———
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+    function createInputGrid() {
+      const grid = $('#inputGrid');
+      grid.innerHTML = '';
+      for (let i = 0; i < INPUT_SIZE; i++) {
+        const d = document.createElement('div');
+        d.className = 'cell';
+        d.dataset.idx = i + '';
+        d.addEventListener('click', () => {
+          X[i] = X[i] ? 0 : 1;
+          d.classList.toggle('on', !!X[i]);
+        });
+        grid.appendChild(d);
+      }
+    }
+
+    function loadLetter(letter) {
+      const v = letters[letter];
+      X = v.slice();
+      updateInputGrid();
+    }
+
+    function updateInputGrid() {
+      $$('#inputGrid .cell').forEach((d, i) => d.classList.toggle('on', !!X[i]));
+    }
+
+    function makeHeatColor(x, maxAbs) {
+      // x in [-maxAbs, maxAbs]. 蓝(负) — 深蓝 — 灰(零) — 粉(正)。
+      const a = maxAbs > 1e-6 ? Math.max(-1, Math.min(1, x / maxAbs)) : 0;
+      if (a > 0) {
+        const t = a; // 0..1
+        const r = Math.round(180 + t * 60);
+        const g = Math.round(120 + t * 40);
+        const b = Math.round(120 + t * 40);
+        return `rgb(${r},${g},${b})`;
+      } else if (a < 0) {
+        const t = -a;
+        const r = Math.round(120 + t * 30);
+        const g = Math.round(150 + t * 50);
+        const b = Math.round(200 + t * 55);
+        return `rgb(${r},${g},${b})`;
+      } else {
+        return '#2a3562';
+      }
+    }
+
+    function renderHidden() {
+      const wrap = $('#hiddenGrid');
+      wrap.innerHTML = '';
+      const selected = window.__selectedHidden ?? -1;
+      for (let j = 0; j < HIDDEN; j++) {
+        const tile = document.createElement('div');
+        tile.className = 'mini-map' + (selected === j ? ' selected' : '');
+        const heat = document.createElement('div');
+        heat.className = 'heat';
+
+        // 取该隐藏神经元对应的 W1 列（输入→隐藏 j）
+        const col = Array.from({ length: INPUT_SIZE }, (_, i) => W1[i][j]);
+        const maxAbs = Math.max(...col.map(v => Math.abs(v))) || 1;
+
+        for (let i = 0; i < INPUT_SIZE; i++) {
+          const c = document.createElement('div');
+          c.style.background = makeHeatColor(col[i], maxAbs);
+          c.style.opacity = showAct ? 0.8 : 1;
+          // 梯度叠加边框：红(增大)、蓝(减小)
+          if (showGrad && lastGrads.dW1) {
+            const g = lastGrads.dW1[i][j];
+            if (Math.abs(g) > 1e-4) {
+              c.style.boxShadow = `inset 0 0 0 2px ${g < 0 ? 'rgba(100,160,255,0.8)' : 'rgba(255,140,140,0.9)'}`;
+            }
+          }
+          heat.appendChild(c);
+        }
+
+        const t1 = document.createElement('div');
+        t1.className = 'title';
+        t1.textContent = 'H' + (j + 1);
+        const act = document.createElement('div');
+        act.className = 'activation';
+        act.id = 'act-' + j;
+        act.textContent = '—';
+        tile.appendChild(heat);
+        tile.appendChild(t1);
+        tile.appendChild(act);
+        tile.addEventListener('click', (e) => {
+          if (e.shiftKey || e.ctrlKey || e.metaKey) {
+            if (overlaySel.has(j)) overlaySel.delete(j); else overlaySel.add(j);
+            syncOverlayControls();
+            renderOverlay();
+          } else {
+            window.__selectedHidden = j;
+            renderHidden();
+          }
+        });
+        wrap.appendChild(tile);
+      }
+    }
+
+    function updateActivationsDisplay(a1) {
+      for (let j = 0; j < HIDDEN; j++) {
+        const el = document.getElementById('act-' + j);
+        if (el) el.textContent = a1 ? a1[j].toFixed(2) : '—';
+      }
+    }
+
+    function updateOutputBars(out, pred, tgt, L) {
+      const ids = ['A','B','C'];
+      const bars = [$('#barA'), $('#barB'), $('#barC')];
+      const vals = [$('#valA'), $('#valB'), $('#valC')];
+      for (let k = 0; k < OUTPUT; k++) {
+        const p = Math.max(0, Math.min(1, out ? out[k] : 0));
+        bars[k].style.width = (p * 100).toFixed(1) + '%';
+        vals[k].textContent = p.toFixed(2);
+      }
+      $('#pred').textContent = pred ?? '—';
+      $('#tgt').textContent = tgt ?? '—';
+      $('#loss').textContent = (L ?? 0).toFixed(3);
+    }
+
+    function getOverlayMode() {
+      return $('#ovModeWA')?.checked ? 'WA' : 'W';
+    }
+
+    function renderOverlayControls() {
+      const box = $('#overlayControls');
+      box.innerHTML = '';
+      for (let j = 0; j < HIDDEN; j++) {
+        const label = document.createElement('label');
+        label.className = 'ov-chip';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = 'ovSel-' + j;
+        cb.checked = overlaySel.has(j);
+        cb.addEventListener('change', () => { if (cb.checked) overlaySel.add(j); else overlaySel.delete(j); renderOverlay(); });
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode('H' + (j + 1)));
+        box.appendChild(label);
+      }
+    }
+
+    function syncOverlayControls() {
+      for (let j = 0; j < HIDDEN; j++) {
+        const cb = document.getElementById('ovSel-' + j);
+        if (cb) cb.checked = overlaySel.has(j);
+      }
+    }
+
+    function createOverlayHeat() {
+      const heat = $('#overlayHeat');
+      heat.innerHTML = '';
+      for (let i = 0; i < INPUT_SIZE; i++) {
+        const c = document.createElement('div');
+        heat.appendChild(c);
+      }
+    }
+
+    function renderOverlay() {
+      const cells = Array.from($('#overlayHeat').children);
+      if (!cells.length) return;
+      // 计算合成向量
+      const mode = getOverlayMode();
+      const a1 = forward(X).a1; // 用于WA模式
+      const vec = new Array(INPUT_SIZE).fill(0);
+      const chosen = Array.from(overlaySel.values());
+      for (const j of chosen) {
+        for (let i = 0; i < INPUT_SIZE; i++) vec[i] += W1[i][j] * (mode === 'WA' ? a1[j] : 1);
+      }
+      const maxAbs = Math.max(1e-6, ...vec.map(v => Math.abs(v)));
+      for (let i = 0; i < INPUT_SIZE; i++) {
+        const v = vec[i];
+        cells[i].style.background = makeHeatColor(v, maxAbs);
+      }
+      $('#overlayInfo').textContent = chosen.length ? `${chosen.length}个，模式：${mode==='WA'?'加权':'相加'}` : '未选择';
+    }
+
+    function predictLetter(out) {
+      const idx = out.indexOf(Math.max(...out));
+      return ['A','B','C'][idx];
+    }
+
+    function doForwardAndRender() {
+      const { a1, out } = forward(X);
+      const tgt = $('#targetSel').value;
+      const L = lossMSE(oneHot(tgt), out);
+      updateActivationsDisplay(a1);
+      updateOutputBars(out, predictLetter(out), tgt, L);
+      renderHidden();
+    }
+
+    function trainNSteps(n) {
+      const tgt = $('#targetSel').value;
+      const y = oneHot(tgt);
+      const lr = parseFloat($('#lr').value);
+      let lastCache = null;
+      for (let i = 0; i < n; i++) lastCache = step(X, y, lr);
+      const out = forward(X).out; // 更新后前向
+      updateActivationsDisplay(forward(X).a1);
+      updateOutputBars(out, predictLetter(out), tgt, lossMSE(y, out));
+      renderHidden();
+      $('#explain').textContent = `已训练 ${n} 步：把“像${tgt}”的连接加强了一点点，“不像${tgt}”的弱化了一点点。`;
+    }
+
+    function toggleAuto() {
+      if (autoTimer) {
+        clearInterval(autoTimer); autoTimer = null; $('#btnAuto').classList.remove('btn-on');
+      } else {
+        const loop = () => trainNSteps(1);
+        autoTimer = setInterval(loop, 120);
+        $('#btnAuto').classList.add('btn-on');
+      }
+    }
+
+    function addNoise(p = 0.15) {
+      for (let i = 0; i < INPUT_SIZE; i++) {
+        if (Math.random() < p) X[i] = X[i] ? 0 : 1;
+      }
+      updateInputGrid();
+    }
+
+    // ——— 事件绑定 ———
+    function bindEvents() {
+      $('#btnClear').addEventListener('click', () => { X = new Array(INPUT_SIZE).fill(0); updateInputGrid(); });
+      $('#btnNoise').addEventListener('click', () => { addNoise(0.12); });
+      $$('button[data-letter]').forEach(b => b.addEventListener('click', () => { const L = b.dataset.letter; loadLetter(L); $('#targetSel').value = L; doForwardAndRender(); }));
+      $('#targetSel').addEventListener('change', () => doForwardAndRender());
+      $('#btnRandom').addEventListener('click', () => { initWeights(); doForwardAndRender(); $('#explain').textContent = '已随机初始化权重：现在网络像“白纸”，需要通过训练慢慢学会。'; });
+      $('#btnForward').addEventListener('click', () => { doForwardAndRender(); $('#explain').textContent = '完成一次前向传播：输入→隐藏→输出。'; });
+      $('#btnTrain1').addEventListener('click', () => trainNSteps(1));
+      $('#btnTrain100').addEventListener('click', () => trainNSteps(100));
+      $('#btnAuto').addEventListener('click', toggleAuto);
+      $('#btnShowAct').addEventListener('click', () => { showAct = !showAct; $('#btnShowAct').classList.toggle('btn-on', showAct); renderHidden(); renderOverlay(); });
+      $('#btnShowGrad').addEventListener('click', () => { showGrad = !showGrad; $('#btnShowGrad').classList.toggle('btn-on', showGrad); renderHidden(); });
+      $('#lr').addEventListener('input', (e) => { $('#lrVal').textContent = parseFloat(e.target.value).toFixed(2); });
+      $('#btnOvClear').addEventListener('click', () => { overlaySel.clear(); syncOverlayControls(); renderOverlay(); });
+      $('#ovModeW').addEventListener('change', renderOverlay);
+      $('#ovModeWA').addEventListener('change', renderOverlay);
+      window.addEventListener('beforeunload', () => { if (autoTimer) clearInterval(autoTimer); });
+    }
+
+    // ——— 初始化 ———
+    function init() {
+      createInputGrid();
+      initWeights();
+      loadLetter('A');
+      $('#targetSel').value = 'A';
+      bindEvents();
+      renderOverlayControls();
+      createOverlayHeat();
+      doForwardAndRender();
+      renderOverlay();
+    }
+
+    init();
+  </script>
+</body>
+</html>
